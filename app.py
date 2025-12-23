@@ -1,4 +1,4 @@
-# app.py
+﻿# app.py
 """
 定期定額策略回測工具 - Streamlit 主應用程式
 DCA Strategy Backtesting Tool - Full Featured Version
@@ -35,6 +35,7 @@ from strategies import (
 )
 from utils.report_generator import ReportGenerator
 from utils.robustness_tester import RobustnessTester
+from utils.grid_search import GridSearchOptimizer, GridSearchConfig
 
 
 # ===================== CSS 樣式 =====================
@@ -159,8 +160,14 @@ def render_metric_card(label: str, value: str, is_positive: bool = True):
 
 def calculate_buy_and_hold(market_data: pd.DataFrame, total_investment: float) -> Dict:
     """計算 Buy & Hold 策略績效"""
-    first_price = market_data['Adj Close'].iloc[0]
-    last_price = market_data['Adj Close'].iloc[-1]
+    # 優先使用 Close，如果沒有則用 Adj Close
+    price_col = 'Close' if 'Close' in market_data.columns else 'Adj Close'
+    if price_col not in market_data.columns:
+        raise KeyError(f"找不到價格欄位: {market_data.columns.tolist()}")
+    
+    prices = market_data[price_col]
+    first_price = prices.iloc[0]
+    last_price = prices.iloc[-1]
     shares = total_investment / first_price
     final_value = shares * last_price
     total_return = (final_value - total_investment) / total_investment * 100
@@ -169,12 +176,12 @@ def calculate_buy_and_hold(market_data: pd.DataFrame, total_investment: float) -
     cagr = ((final_value / total_investment) ** (1 / years) - 1) * 100 if years > 0 else 0
     
     # 計算回撤
-    cummax = market_data['Adj Close'].cummax()
-    drawdown = (market_data['Adj Close'] - cummax) / cummax * 100
+    cummax = prices.cummax()
+    drawdown = (prices - cummax) / cummax * 100
     max_drawdown = drawdown.min()
     
     # 計算波動率
-    returns = market_data['Adj Close'].pct_change().dropna()
+    returns = prices.pct_change().dropna()
     volatility = returns.std() * np.sqrt(252) * 100
     
     # 夏普比率
@@ -242,7 +249,7 @@ def main():
     # 頁面選擇
     page = st.sidebar.radio(
         "📌 功能選擇",
-        ["🏠 基本回測", "🔬 穩健性測試", "🌍 跨市場分析", "📁 測試管理"],
+        ["🏠 基本回測", "🔬 穩健性測試", "🌍 跨市場分析", "🎯 參數優化", "📁 測試管理"],
         index=0
     )
     
@@ -252,6 +259,8 @@ def main():
         robustness_test_page()
     elif page == "🌍 跨市場分析":
         cross_market_page()
+    elif page == "🎯 參數優化":
+        grid_search_page()
     elif page == "📁 測試管理":
         test_management_page()
 
@@ -638,7 +647,7 @@ def display_results(results: Dict[str, Any], symbol: str):
             st.info("請選擇至少兩個策略進行統計比較")
     
     with tab5:
-        st.subheader("� vs Buy & Hold 對比")
+        st.subheader(" vs Buy & Hold 對比")
         st.markdown("比較 DCA 策略與一次性投入的表現差異")
         
         # 取第一個策略的數據作為參考
@@ -736,15 +745,18 @@ def display_results(results: Dict[str, Any], symbol: str):
                     mode='lines'
                 ))
             
-            # Buy & Hold
-            bh_returns = (market_data['Adj Close'] / market_data['Adj Close'].iloc[0] - 1) * 100
-            fig.add_trace(go.Scatter(
-                x=market_data.index,
-                y=bh_returns,
-                name='Buy & Hold',
-                mode='lines',
-                line=dict(dash='dash', color='gray', width=2)
-            ))
+            # Buy & Hold (優先使用 Close)
+            price_col = 'Close' if 'Close' in market_data.columns else 'Adj Close'
+            if price_col in market_data.columns:
+                bh_prices = market_data[price_col]
+                bh_returns = (bh_prices / bh_prices.iloc[0] - 1) * 100
+                fig.add_trace(go.Scatter(
+                    x=market_data.index,
+                    y=bh_returns,
+                    name='Buy & Hold',
+                    mode='lines',
+                    line=dict(dash='dash', color='gray', width=2)
+                ))
             
             fig.add_hline(y=0, line_dash="dot", line_color="black", opacity=0.3)
             fig.update_layout(
@@ -766,12 +778,12 @@ def display_results(results: Dict[str, Any], symbol: str):
             st.warning(f"無法計算 Buy & Hold 對比: {e}")
     
     with tab6:
-        st.subheader("�📥 導出報告")
+        st.subheader("📥 導出報告")
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.markdown("### Excel 報告")
+            st.markdown("### 📊 Excel 報告")
             st.markdown("包含：概述、詳細指標、交易記錄")
             
             try:
@@ -787,7 +799,7 @@ def display_results(results: Dict[str, Any], symbol: str):
                 st.warning("需要安裝 openpyxl 套件才能導出 Excel")
         
         with col2:
-            st.markdown("### CSV 數據")
+            st.markdown("### 📄 CSV 數據")
             st.markdown("下載對比表格數據")
             
             csv_data = report_gen.generate_comparison_table(results).to_csv()
@@ -798,6 +810,58 @@ def display_results(results: Dict[str, Any], symbol: str):
                 mime="text/csv",
                 use_container_width=True
             )
+        
+        with col3:
+            st.markdown("### 💾 儲存結果")
+            st.markdown("儲存到本地以便日後比較")
+            
+            test_name = st.text_input(
+                "測試名稱",
+                value=f"{symbol}_{datetime.now().strftime('%Y%m%d_%H%M')}",
+                key="save_test_name_tab6"
+            )
+            
+            if st.button("💾 儲存回測結果", use_container_width=True, key="save_btn_tab6"):
+                try:
+                    # 儲存資料夾
+                    save_dir = Path("saved_tests")
+                    save_dir.mkdir(exist_ok=True)
+                    
+                    # 準備儲存資料
+                    save_data = {
+                        "timestamp": datetime.now().isoformat(),
+                        "symbol": symbol,
+                        "test_name": test_name,
+                        "results": {}
+                    }
+                    
+                    for name, result in results.items():
+                        save_data["results"][name] = {
+                            "metrics": {
+                                "total_return": result.metrics.total_return,
+                                "annualized_return": result.metrics.annualized_return,
+                                "volatility": result.metrics.volatility,
+                                "sharpe_ratio": result.metrics.sharpe_ratio,
+                                "max_drawdown": result.metrics.max_drawdown,
+                                "total_invested": result.metrics.total_invested,
+                                "final_value": result.metrics.final_value,
+                                "total_periods": result.metrics.total_periods,
+                            },
+                            "config": {
+                                "strategy_type": result.config.strategy_type,
+                                "invest_amount": result.config.invest_amount,
+                                "frequency": result.config.frequency,
+                            }
+                        }
+                    
+                    # 儲存 JSON
+                    file_path = save_dir / f"{test_name}.json"
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        json.dump(save_data, f, ensure_ascii=False, indent=2)
+                    
+                    st.success(f"✅ 已儲存到: {file_path}")
+                except Exception as e:
+                    st.error(f"儲存失敗: {e}")
 
 
 # ===================== 穩健性測試頁面 =====================
@@ -1494,35 +1558,442 @@ def cross_market_page():
                 }), use_container_width=True)
 
 
+# ===================== 參數優化頁面 =====================
+def grid_search_page():
+    """參數優化（網格搜索）頁面"""
+    st.header("🎯 參數優化 - 全自動網格搜索")
+    st.caption("自動測試所有策略、市場、參數組合，找出最佳配置")
+    
+    data_loader = get_data_loader()
+    markets = data_loader.get_available_markets()
+    
+    # 配置區域
+    with st.sidebar:
+        st.header("⚙️ 搜索配置")
+        
+        # 模式選擇
+        search_mode = st.radio(
+            "搜索模式",
+            ["⚡ 快速模式", "🔬 完整模式", "🛠️ 自定義"],
+            help="快速模式：約 8 種組合\n完整模式：約 500+ 種組合\n自定義：自行設定"
+        )
+        
+        st.divider()
+        
+        # 策略選擇
+        st.subheader("📊 策略選擇")
+        selected_strategies = []
+        if st.checkbox("V0: 純定期定額", value=True):
+            selected_strategies.append('V0')
+        if st.checkbox("V1: 跌深加碼", value=True):
+            selected_strategies.append('V1')
+        if st.checkbox("V2: 趨勢過濾", value=True):
+            selected_strategies.append('V2')
+        if st.checkbox("V3: 波動率調整", value=True):
+            selected_strategies.append('V3')
+        
+        st.divider()
+        
+        # 市場選擇
+        st.subheader("🌍 市場選擇")
+        market_options = list(markets.keys())
+        # 確保預設值都在選項中
+        default_fast = [m for m in ['SPY', '0050.TW'] if m in market_options]
+        default_full = [m for m in ['SPY', 'QQQ', '0050.TW', 'DIA'] if m in market_options]
+        selected_markets = st.multiselect(
+            "選擇市場",
+            market_options,
+            default=default_fast if search_mode == "⚡ 快速模式" else default_full
+        )
+        
+        st.divider()
+        
+        # 時間區間
+        st.subheader("📅 時間區間")
+        if search_mode == "🛠️ 自定義":
+            col1, col2 = st.columns(2)
+            with col1:
+                start_date = st.date_input("開始日期", value=date(2015, 1, 1))
+            with col2:
+                end_date = st.date_input("結束日期", value=date(2024, 12, 31))
+            
+            test_multiple_periods = st.checkbox("測試多個起始點", value=False)
+            if test_multiple_periods:
+                additional_starts = st.multiselect(
+                    "額外起始年份",
+                    [2010, 2012, 2016, 2018, 2020],
+                    default=[2010, 2018]
+                )
+        else:
+            start_date = date(2015, 1, 1)
+            end_date = date(2024, 12, 31)
+            test_multiple_periods = search_mode == "🔬 完整模式"
+            additional_starts = [2010, 2018] if test_multiple_periods else []
+    
+    # 主要內容區
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.subheader("📋 搜索範圍預覽")
+        
+        # 建立配置
+        if search_mode == "⚡ 快速模式":
+            config = GridSearchConfig(
+                strategies=selected_strategies,
+                markets=selected_markets,
+                start_dates=[date(2015, 1, 1)],
+                end_dates=[date(2024, 12, 31)],
+                base_amounts=[10000],
+                frequencies=['monthly'],
+                v1_dip_thresholds=[(0.10, 0.20)],
+                v1_multipliers=[(1.5, 2.0)],
+                v1_lookbacks=[252],
+                v2_ma_periods=[200],
+                v2_ma_types=['SMA'],
+                v2_below_multipliers=[1.5],
+                v3_vol_windows=[20],
+                v3_vol_thresholds=[(0.8, 1.5)],
+                v3_vol_multipliers=[(0.8, 1.5)],
+            )
+        elif search_mode == "🔬 完整模式":
+            config = GridSearchConfig(
+                strategies=selected_strategies,
+                markets=selected_markets,
+                start_dates=[date(2010, 1, 1), date(2015, 1, 1), date(2018, 1, 1)],
+                end_dates=[date(2024, 12, 31), date(2024, 12, 31), date(2024, 12, 31)],
+                base_amounts=[10000],
+                frequencies=['monthly'],
+                v1_dip_thresholds=[(0.10, 0.20), (0.15, 0.25)],
+                v1_multipliers=[(1.5, 2.0), (2.0, 3.0)],
+                v1_lookbacks=[126, 252],
+                v2_ma_periods=[100, 200],
+                v2_ma_types=['SMA', 'EMA'],
+                v2_below_multipliers=[1.3, 1.5, 2.0],
+                v3_vol_windows=[20, 60],
+                v3_vol_thresholds=[(0.7, 1.3), (0.8, 1.5)],
+                v3_vol_multipliers=[(0.7, 1.5), (0.8, 2.0)],
+            )
+        else:
+            # 自定義模式
+            start_dates = [start_date]
+            end_dates = [end_date]
+            if test_multiple_periods:
+                for year in additional_starts:
+                    start_dates.append(date(year, 1, 1))
+                    end_dates.append(end_date)
+            
+            config = GridSearchConfig(
+                strategies=selected_strategies,
+                markets=selected_markets,
+                start_dates=start_dates,
+                end_dates=end_dates,
+                base_amounts=[10000],
+                frequencies=['monthly'],
+            )
+        
+        # 計算組合數
+        optimizer = GridSearchOptimizer()
+        total_combinations = optimizer.count_total_combinations(config)
+        
+        # 顯示預覽
+        preview_col1, preview_col2, preview_col3 = st.columns(3)
+        with preview_col1:
+            st.metric("策略數", len(selected_strategies))
+        with preview_col2:
+            st.metric("市場數", len(selected_markets))
+        with preview_col3:
+            st.metric("總組合數", f"{total_combinations:,}")
+        
+        estimated_time = total_combinations * 0.5  # 估計每組合 0.5 秒
+        st.info(f"⏱️ 預估執行時間：約 {estimated_time:.0f} 秒 ({estimated_time/60:.1f} 分鐘)")
+    
+    with col2:
+        st.subheader("🎮 執行控制")
+        
+        run_button = st.button(
+            "🚀 開始搜索",
+            type="primary",
+            use_container_width=True,
+            disabled=len(selected_strategies) == 0 or len(selected_markets) == 0
+        )
+    
+    # 執行搜索
+    if run_button:
+        st.divider()
+        st.subheader("📊 搜索進度")
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        def update_progress(current, total):
+            progress = current / total
+            progress_bar.progress(progress)
+            status_text.text(f"進度：{current}/{total} ({progress*100:.1f}%)")
+        
+        with st.spinner("正在執行網格搜索..."):
+            start_time = datetime.now()
+            results_df = optimizer.run_grid_search(config, progress_callback=update_progress)
+            end_time = datetime.now()
+            elapsed = (end_time - start_time).total_seconds()
+        
+        progress_bar.progress(1.0)
+        status_text.text(f"✅ 完成！共測試 {len(results_df)} 種組合，耗時 {elapsed:.1f} 秒")
+        
+        # 儲存結果到 session state
+        st.session_state['grid_search_results'] = results_df
+        st.session_state['grid_search_optimizer'] = optimizer
+        st.rerun()
+    
+    # 顯示結果
+    if 'grid_search_results' in st.session_state and len(st.session_state['grid_search_results']) > 0:
+        results_df = st.session_state['grid_search_results']
+        optimizer = st.session_state.get('grid_search_optimizer', GridSearchOptimizer())
+        
+        st.divider()
+        st.subheader("🏆 搜索結果")
+        
+        # 結果標籤頁
+        result_tabs = st.tabs([
+            "📊 完整結果",
+            "🥇 最佳 Sharpe",
+            "💰 最佳報酬",
+            "🛡️ 最低回撤",
+            "📈 策略彙總",
+            "🌍 市場彙總",
+            "📉 熱力圖"
+        ])
+        
+        with result_tabs[0]:
+            st.caption(f"共 {len(results_df)} 種組合（依 Sharpe Ratio 排序）")
+            
+            # 篩選器
+            filter_col1, filter_col2, filter_col3 = st.columns(3)
+            with filter_col1:
+                filter_strategy = st.multiselect(
+                    "篩選策略",
+                    results_df['策略'].unique().tolist(),
+                    default=results_df['策略'].unique().tolist()
+                )
+            with filter_col2:
+                filter_market = st.multiselect(
+                    "篩選市場",
+                    results_df['市場'].unique().tolist(),
+                    default=results_df['市場'].unique().tolist()
+                )
+            with filter_col3:
+                min_sharpe = st.number_input("最低 Sharpe", value=0.0, step=0.1)
+            
+            filtered_df = results_df[
+                (results_df['策略'].isin(filter_strategy)) &
+                (results_df['市場'].isin(filter_market)) &
+                (results_df['夏普比率'] >= min_sharpe)
+            ]
+            
+            st.dataframe(
+                filtered_df.style.format({
+                    '總投入': '{:,.0f}',
+                    '最終價值': '{:,.0f}',
+                    '總報酬率(%)': '{:.2f}',
+                    'CAGR(%)': '{:.2f}',
+                    '夏普比率': '{:.3f}',
+                    '最大回撤(%)': '{:.2f}',
+                    '波動率(%)': '{:.2f}',
+                    '勝率(%)': '{:.2f}',
+                    '平均成本': '{:.2f}',
+                }).background_gradient(subset=['夏普比率'], cmap='RdYlGn'),
+                use_container_width=True,
+                height=400
+            )
+        
+        with result_tabs[1]:
+            st.caption("🥇 Sharpe Ratio 最高的 20 種組合")
+            best_sharpe = optimizer.get_best_by_metric(results_df, '夏普比率', 20)
+            st.dataframe(
+                best_sharpe.style.format({
+                    '總報酬率(%)': '{:.2f}',
+                    'CAGR(%)': '{:.2f}',
+                    '夏普比率': '{:.3f}',
+                    '最大回撤(%)': '{:.2f}',
+                }).background_gradient(subset=['夏普比率'], cmap='RdYlGn'),
+                use_container_width=True
+            )
+        
+        with result_tabs[2]:
+            st.caption("💰 總報酬率最高的 20 種組合")
+            best_return = optimizer.get_best_by_metric(results_df, '總報酬率(%)', 20)
+            st.dataframe(
+                best_return.style.format({
+                    '總報酬率(%)': '{:.2f}',
+                    'CAGR(%)': '{:.2f}',
+                    '夏普比率': '{:.3f}',
+                    '最大回撤(%)': '{:.2f}',
+                }).background_gradient(subset=['總報酬率(%)'], cmap='RdYlGn'),
+                use_container_width=True
+            )
+        
+        with result_tabs[3]:
+            st.caption("🛡️ 最大回撤最低的 20 種組合")
+            best_dd = optimizer.get_best_by_metric(results_df, '最大回撤(%)', 20)
+            st.dataframe(
+                best_dd.style.format({
+                    '總報酬率(%)': '{:.2f}',
+                    'CAGR(%)': '{:.2f}',
+                    '夏普比率': '{:.3f}',
+                    '最大回撤(%)': '{:.2f}',
+                }).background_gradient(subset=['最大回撤(%)'], cmap='RdYlGn_r'),
+                use_container_width=True
+            )
+        
+        with result_tabs[4]:
+            st.caption("📈 依策略分組的統計彙總")
+            strategy_summary = optimizer.get_summary_by_strategy(results_df)
+            st.dataframe(strategy_summary, use_container_width=True)
+            
+            # 策略比較圖表
+            import plotly.express as px
+            fig = px.box(
+                results_df,
+                x='策略',
+                y='夏普比率',
+                color='策略',
+                title='各策略 Sharpe Ratio 分布'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with result_tabs[5]:
+            st.caption("🌍 依市場分組的統計彙總")
+            market_summary = optimizer.get_summary_by_market(results_df)
+            st.dataframe(market_summary, use_container_width=True)
+            
+            # 市場比較圖表
+            import plotly.express as px
+            fig = px.box(
+                results_df,
+                x='市場',
+                y='CAGR(%)',
+                color='市場',
+                title='各市場 CAGR 分布'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with result_tabs[6]:
+            st.caption("📉 策略 x 市場 熱力圖")
+            
+            # 創建熱力圖數據
+            metric_option = st.selectbox(
+                "選擇指標",
+                ['夏普比率', 'CAGR(%)', '總報酬率(%)', '最大回撤(%)']
+            )
+            
+            pivot_df = results_df.pivot_table(
+                values=metric_option,
+                index='策略',
+                columns='市場',
+                aggfunc='mean'
+            )
+            
+            import plotly.express as px
+            fig = px.imshow(
+                pivot_df,
+                labels=dict(x="市場", y="策略", color=metric_option),
+                x=pivot_df.columns.tolist(),
+                y=pivot_df.index.tolist(),
+                color_continuous_scale='RdYlGn' if metric_option != '最大回撤(%)' else 'RdYlGn_r',
+                title=f'策略 x 市場：{metric_option} 熱力圖'
+            )
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # 匯出按鈕
+        st.divider()
+        col1, col2, col3 = st.columns([1, 1, 2])
+        
+        with col1:
+            excel_data = optimizer.export_to_excel(results_df, "grid_search_results.xlsx")
+            st.download_button(
+                label="📥 下載 Excel 報告",
+                data=excel_data,
+                file_name=f"DCA_GridSearch_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        
+        with col2:
+            csv_data = results_df.to_csv(index=True).encode('utf-8-sig')
+            st.download_button(
+                label="📥 下載 CSV",
+                data=csv_data,
+                file_name=f"DCA_GridSearch_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
+        
+        with col3:
+            if st.button("🗑️ 清除結果"):
+                del st.session_state['grid_search_results']
+                if 'grid_search_optimizer' in st.session_state:
+                    del st.session_state['grid_search_optimizer']
+                st.rerun()
+
+
 # ===================== 測試管理頁面 =====================
 def test_management_page():
     """測試管理頁面"""
     st.header("📁 測試管理")
-    st.caption("保存、載入和管理測試結果")
+    st.caption("保存、載入、匯出和管理測試結果")
     
-    tab1, tab2 = st.tabs(["💾 保存測試", "📂 載入測試"])
+    tab1, tab2, tab3 = st.tabs(["💾 保存測試", "📂 載入測試", "📥 快速匯出"])
     
     with tab1:
         st.subheader("保存當前測試結果")
         
-        if 'backtest_results' in st.session_state:
+        if 'backtest_results' in st.session_state and st.session_state['backtest_results']:
             results = st.session_state['backtest_results']
             symbol = st.session_state.get('symbol', 'Unknown')
             
-            st.success(f"當前有 {len(results)} 個策略的測試結果")
+            st.success(f"✅ 當前有 {len(results)} 個策略的測試結果 ({symbol})")
             
-            test_name = st.text_input("測試名稱", value=f"{symbol}_test")
+            # 顯示當前結果摘要
+            with st.expander("📋 當前結果摘要", expanded=True):
+                summary_data = []
+                for name, result in results.items():
+                    if hasattr(result, 'metrics'):
+                        m = result.metrics
+                        summary_data.append({
+                            '策略': name,
+                            '總報酬(%)': f"{m.total_return:.2f}",
+                            'CAGR(%)': f"{m.cagr:.2f}",
+                            'Sharpe': f"{m.sharpe_ratio:.3f}",
+                            '最大回撤(%)': f"{m.max_drawdown:.2f}",
+                        })
+                if summary_data:
+                    st.dataframe(pd.DataFrame(summary_data), use_container_width=True)
             
-            if st.button("💾 保存測試結果", type="primary"):
-                config = {
-                    'symbol': symbol,
-                    'strategies': list(results.keys()),
-                    'timestamp': datetime.now().isoformat()
-                }
-                filepath = save_test_result(results, config, test_name)
-                st.success(f"測試已保存至: {filepath}")
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                test_name = st.text_input(
+                    "測試名稱", 
+                    value=f"{symbol}_{datetime.now().strftime('%m%d')}",
+                    help="輸入一個方便識別的名稱"
+                )
+            
+            with col2:
+                st.write("")  # 對齊
+                st.write("")
+                if st.button("💾 保存測試結果", type="primary", use_container_width=True):
+                    config = {
+                        'symbol': symbol,
+                        'strategies': list(results.keys()),
+                        'timestamp': datetime.now().isoformat(),
+                        'start_date': str(st.session_state.get('start_date', '')),
+                        'end_date': str(st.session_state.get('end_date', '')),
+                    }
+                    filepath = save_test_result(results, config, test_name)
+                    st.success(f"✅ 測試已保存！")
+                    st.caption(f"路徑: {filepath}")
         else:
-            st.info("沒有可保存的測試結果。請先執行回測。")
+            st.info("💡 沒有可保存的測試結果。請先到「🏠 基本回測」執行回測。")
+            if st.button("➡️ 前往基本回測"):
+                st.session_state['nav_to'] = "🏠 基本回測"
+                st.rerun()
     
     with tab2:
         st.subheader("載入歷史測試")
@@ -1530,32 +2001,124 @@ def test_management_page():
         saved_tests = load_saved_tests()
         
         if saved_tests:
-            for test in saved_tests:
-                with st.expander(f"📋 {test.get('name', 'Unknown')} - {test.get('timestamp', '')}"):
-                    config = test.get('config', {})
-                    st.markdown(f"""
-                    - **市場**: {config.get('symbol', 'N/A')}
-                    - **策略**: {', '.join(config.get('strategies', []))}
-                    - **時間**: {test.get('timestamp', 'N/A')}
-                    """)
+            st.info(f"📂 共有 {len(saved_tests)} 個已保存的測試")
+            
+            for i, test in enumerate(saved_tests):
+                config = test.get('config', {})
+                test_time = test.get('timestamp', 'Unknown')
+                test_name = test.get('name', 'Unknown')
+                
+                with st.container():
+                    col1, col2, col3 = st.columns([3, 1, 1])
                     
-                    col1, col2 = st.columns(2)
                     with col1:
-                        if st.button("📂 載入此測試", key=f"load_{test.get('timestamp')}"):
-                            st.session_state['backtest_results'] = test.get('results', {})
-                            st.session_state['symbol'] = config.get('symbol', 'Unknown')
-                            st.success("測試已載入！請切換到「基本回測」頁面查看結果。")
+                        st.markdown(f"**{i+1}. {test_name}**")
+                        st.caption(f"📍 {config.get('symbol', 'N/A')} | 🕐 {test_time[:16] if len(test_time) > 16 else test_time}")
+                        strategies = config.get('strategies', [])
+                        st.caption(f"📊 策略: {', '.join(strategies[:3])}{'...' if len(strategies) > 3 else ''}")
                     
                     with col2:
-                        if st.button("🗑️ 刪除", key=f"del_{test.get('timestamp')}"):
+                        if st.button("📂 載入", key=f"load_{i}_{test_time}", use_container_width=True):
+                            st.session_state['backtest_results'] = test.get('results', {})
+                            st.session_state['symbol'] = config.get('symbol', 'Unknown')
+                            st.success("✅ 已載入！前往「基本回測」查看")
+                    
+                    with col3:
+                        if st.button("🗑️ 刪除", key=f"del_{i}_{test_time}", use_container_width=True):
                             try:
                                 os.remove(test.get('filepath', ''))
                                 st.success("已刪除")
                                 st.rerun()
+                            except Exception as e:
+                                st.error(f"刪除失敗: {e}")
+                    
+                    st.divider()
+            
+            # 批量操作
+            st.subheader("🔧 批量操作")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🗑️ 清空所有測試", type="secondary"):
+                    st.warning("⚠️ 確定要刪除所有測試嗎？")
+                    if st.button("確認刪除全部", key="confirm_delete_all"):
+                        for test in saved_tests:
+                            try:
+                                os.remove(test.get('filepath', ''))
                             except:
-                                st.error("刪除失敗")
+                                pass
+                        st.success("已清空所有測試")
+                        st.rerun()
         else:
-            st.info("沒有已保存的測試。執行回測後可在此保存。")
+            st.info("📭 沒有已保存的測試。執行回測後可在此保存。")
+    
+    with tab3:
+        st.subheader("快速匯出當前結果")
+        
+        if 'backtest_results' in st.session_state and st.session_state['backtest_results']:
+            results = st.session_state['backtest_results']
+            symbol = st.session_state.get('symbol', 'Unknown')
+            
+            # 準備匯出數據
+            export_data = []
+            for name, result in results.items():
+                if hasattr(result, 'metrics'):
+                    m = result.metrics
+                    export_data.append({
+                        '策略': name,
+                        '市場': symbol,
+                        '總投入': m.total_invested,
+                        '最終價值': m.final_value,
+                        '總報酬率(%)': round(m.total_return, 2),
+                        'CAGR(%)': round(m.cagr, 2),
+                        '夏普比率': round(m.sharpe_ratio, 3),
+                        '最大回撤(%)': round(m.max_drawdown, 2),
+                        '波動率(%)': round(m.volatility, 2),
+                        '勝率(%)': round(m.win_rate, 2),
+                        '投資月數': m.investment_months,
+                    })
+            
+            if export_data:
+                df = pd.DataFrame(export_data)
+                st.dataframe(df, use_container_width=True)
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # CSV 匯出
+                    csv = df.to_csv(index=False).encode('utf-8-sig')
+                    st.download_button(
+                        label="📥 下載 CSV",
+                        data=csv,
+                        file_name=f"DCA_{symbol}_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                
+                with col2:
+                    # Excel 匯出
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df.to_excel(writer, sheet_name='績效總覽', index=False)
+                        
+                        # 加入交易記錄
+                        for name, result in results.items():
+                            if hasattr(result, 'to_transactions_df'):
+                                tx_df = result.to_transactions_df()
+                                if len(tx_df) > 0:
+                                    # Excel sheet name 限制：移除非法字符並限制長度
+                                    import re
+                                    sheet_name = re.sub(r'[\[\]:*?/\\]', '_', name)[:31]
+                                    tx_df.to_excel(writer, sheet_name=sheet_name, index=False)
+                    
+                    st.download_button(
+                        label="📥 下載 Excel",
+                        data=output.getvalue(),
+                        file_name=f"DCA_{symbol}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+        else:
+            st.info("💡 沒有可匯出的結果。請先執行回測。")
 
 
 # ===================== 執行 =====================

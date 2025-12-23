@@ -32,6 +32,7 @@ class PerformanceMetrics:
     final_value: float  # 最終市值
     total_periods: int  # 總投入次數
     investment_months: int  # 投資月數
+    investment_years: float  # 投資年數
     avg_cost: float  # 平均持倉成本
     win_rate: float  # 勝率 (%)
 
@@ -104,6 +105,7 @@ class MetricsCalculator:
         # 交易統計
         total_periods = len(equity_curve)
         investment_months = int(years * 12)
+        investment_years = round(years, 2)
         avg_cost = total_invested / total_shares if total_shares > 0 else 0
         win_rate = (returns > 0).sum() / len(returns) * 100 if len(returns) > 0 else 0
         
@@ -124,6 +126,7 @@ class MetricsCalculator:
             final_value=round(final_value, 2),
             total_periods=total_periods,
             investment_months=investment_months,
+            investment_years=investment_years,
             avg_cost=round(avg_cost, 2),
             win_rate=round(win_rate, 2)
         )
