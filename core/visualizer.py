@@ -104,9 +104,9 @@ class Visualizer:
                 )
             ))
         
-        # 添加金融事件標註
-        if self.show_events and results:
-            self._add_event_annotations(fig, results)
+        # 暫時停用金融事件標註（Plotly 版本兼容問題）
+        # if self.show_events and results:
+        #     self._add_event_annotations(fig, results)
         
         fig.update_layout(
             title=dict(text=title, font=dict(size=18)),
@@ -448,14 +448,16 @@ class Visualizer:
         # 取得數據時間範圍
         first_result = list(results.values())[0]
         date_range = first_result.equity_curve['date']
-        min_date = date_range.min()
-        max_date = date_range.max()
+        min_date = pd.to_datetime(date_range.min())
+        max_date = pd.to_datetime(date_range.max())
         
         for event_date, event_name in FINANCIAL_EVENTS.items():
             event_dt = pd.to_datetime(event_date)
             if min_date <= event_dt <= max_date:
+                # 轉換為字串格式避免 Plotly Timestamp 錯誤
+                event_str = event_dt.strftime('%Y-%m-%d')
                 fig.add_vline(
-                    x=event_dt,
+                    x=event_str,
                     line_dash="dot",
                     line_color="rgba(128, 128, 128, 0.5)",
                     annotation_text=event_name,
