@@ -1,4 +1,20 @@
-streamlit
-yfinance
-pandas
-matplotlib
+# DCA 策略回測工具 - 依賴項
+# DCA Strategy Backtesting Tool Dependencies
+
+# === 核心框架 ===
+streamlit>=1.28.0
+pandas>=2.0.0
+numpy>=1.24.0
+
+# === 數據獲取 ===
+yfinance>=0.2.31
+
+# === 視覺化 ===
+plotly>=5.15.0
+matplotlib>=3.7.0
+
+# === 統計分析 ===
+scipy>=1.11.0
+
+# === 報告導出 ===
+openpyxl>=3.1.0
