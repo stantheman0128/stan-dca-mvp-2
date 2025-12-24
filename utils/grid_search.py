@@ -90,8 +90,10 @@ class GridSearchOptimizer:
         self.data_loader = DataLoader()
         self.backtest_engine = BacktestEngine()
         self.metrics_calculator = MetricsCalculator()
+        # 只保留摘要結果，不保留完整 DataFrame
         self.results: List[Dict] = []
         self._data_cache: Dict[str, pd.DataFrame] = {}
+        self._max_cache_size = 5  # 最多緩存 5 個市場的數據
     
     def _get_market_data(
         self, 
@@ -99,8 +101,14 @@ class GridSearchOptimizer:
         start_date: date, 
         end_date: date
     ) -> Optional[pd.DataFrame]:
-        """取得市場資料（帶快取）"""
+        """取得市場資料（帶快取，限制緩存大小）"""
         cache_key = f"{symbol}_{start_date}_{end_date}"
+        
+        # 如果緩存太大，清除最舊的
+        if len(self._data_cache) >= self._max_cache_size and cache_key not in self._data_cache:
+            oldest_key = next(iter(self._data_cache))
+            del self._data_cache[oldest_key]
+        
         if cache_key not in self._data_cache:
             data = self.data_loader.download(
                 symbol=symbol,
@@ -112,6 +120,11 @@ class GridSearchOptimizer:
             else:
                 return None
         return self._data_cache[cache_key]
+    
+    def clear_cache(self):
+        """清除內部緩存"""
+        self._data_cache.clear()
+        self.results.clear()
     
     def _create_strategy(
         self,

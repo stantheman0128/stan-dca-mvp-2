@@ -88,6 +88,7 @@ h1, h2, h3, h4, h5, h6,
 
 
 # ===================== 初始化 =====================
+# 使用 cache_resource 保持單例，但這些物件本身很小
 @st.cache_resource
 def get_data_loader():
     return DataLoader()
@@ -107,6 +108,31 @@ def get_report_generator():
 @st.cache_resource
 def get_robustness_tester():
     return RobustnessTester()
+
+
+# ===================== 記憶體管理 =====================
+def clear_memory_cache():
+    """清除記憶體緩存"""
+    import gc
+    # 清除 streamlit cache
+    st.cache_data.clear()
+    # 清除 session state 中的大型物件
+    keys_to_remove = []
+    for key in st.session_state:
+        if any(x in key for x in ['results', 'data', 'grid_', 'backtest_']):
+            keys_to_remove.append(key)
+    for key in keys_to_remove:
+        del st.session_state[key]
+    # 強制垃圾回收
+    gc.collect()
+
+
+def get_memory_usage():
+    """取得當前記憶體使用量 (MB)"""
+    import psutil
+    import os
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss / 1024 / 1024
 
 
 # ===================== 輔助函數 =====================
@@ -245,6 +271,21 @@ def main():
     # 標題
     st.title("📈 定期定額策略回測工具")
     st.caption("DCA Strategy Backtesting Tool - 研究不同定期定額策略的歷史表現")
+    
+    # 側邊欄底部：記憶體管理
+    with st.sidebar:
+        st.divider()
+        with st.expander("🔧 系統管理", expanded=False):
+            try:
+                mem_usage = get_memory_usage()
+                st.metric("記憶體使用", f"{mem_usage:.1f} MB")
+            except ImportError:
+                st.info("安裝 psutil 可監控記憶體")
+            
+            if st.button("🗑️ 清除緩存", use_container_width=True):
+                clear_memory_cache()
+                st.success("✅ 緩存已清除")
+                st.rerun()
     
     # 頁面選擇
     page = st.sidebar.radio(
