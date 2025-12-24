@@ -2,14 +2,16 @@
 """
 定期定額策略回測工具 - Streamlit 主應用程式
 DCA Strategy Backtesting Tool - Full Featured Version
+
+重構後版本：使用共用模組減少重複代碼
 """
 import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import date, datetime, timedelta
 from typing import Dict, Any, List
-import pickle
-import os
+from pathlib import Path
+import json
 import io
 
 # 設定頁面必須在最前面
@@ -37,237 +39,33 @@ from utils.report_generator import ReportGenerator
 from utils.robustness_tester import RobustnessTester
 from utils.grid_search import GridSearchOptimizer, GridSearchConfig
 
-
-# ===================== CSS 樣式 =====================
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700&display=swap');
-
-/* 只對特定文字元素套用中文字體 */
-.stMarkdown, .stMarkdown p, .stMarkdown li,
-h1, h2, h3, h4, h5, h6,
-.stDataFrame, .stTable,
-[data-testid="stSidebar"] label,
-[data-testid="stSidebar"] .stMarkdown,
-.element-container p {
-    font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif;
-}
-
-.metric-card {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    border-radius: 10px;
-    padding: 20px;
-    color: white;
-    text-align: center;
-    margin: 5px;
-}
-
-.metric-value {
-    font-size: 2rem;
-    font-weight: 700;
-}
-
-.metric-label {
-    font-size: 0.9rem;
-    opacity: 0.9;
-}
-
-.positive { color: #4CAF50; }
-.negative { color: #F44336; }
-
-.stTabs [data-baseweb="tab-list"] {
-    gap: 8px;
-}
-
-.stTabs [data-baseweb="tab"] {
-    padding: 10px 20px;
-    border-radius: 5px;
-}
-</style>
-""", unsafe_allow_html=True)
+# 載入共用工具（重構後）
+from utils.common import (
+    get_data_loader,
+    get_backtest_engine,
+    get_visualizer,
+    get_report_generator,
+    get_robustness_tester,
+    clear_memory_cache,
+    get_memory_usage,
+    create_strategy_instance,
+    render_metric_card,
+    calculate_buy_and_hold,
+    save_test_result,
+    load_saved_tests,
+    load_css,
+    render_system_info,
+)
 
 
-# ===================== 初始化 =====================
-# 使用 cache_resource 保持單例，但這些物件本身很小
-@st.cache_resource
-def get_data_loader():
-    return DataLoader()
-
-@st.cache_resource
-def get_backtest_engine():
-    return BacktestEngine()
-
-@st.cache_resource
-def get_visualizer():
-    return Visualizer()
-
-@st.cache_resource
-def get_report_generator():
-    return ReportGenerator()
-
-@st.cache_resource
-def get_robustness_tester():
-    return RobustnessTester()
-
-
-# ===================== 記憶體管理 =====================
-def clear_memory_cache():
-    """清除記憶體緩存"""
-    import gc
-    # 清除 streamlit cache
-    st.cache_data.clear()
-    # 清除 session state 中的大型物件
-    keys_to_remove = []
-    for key in st.session_state:
-        if any(x in key for x in ['results', 'data', 'grid_', 'backtest_']):
-            keys_to_remove.append(key)
-    for key in keys_to_remove:
-        del st.session_state[key]
-    # 強制垃圾回收
-    gc.collect()
-
-
-def get_memory_usage():
-    """取得當前記憶體使用量 (MB)"""
-    import psutil
-    import os
-    process = psutil.Process(os.getpid())
-    return process.memory_info().rss / 1024 / 1024
-
-
-# ===================== 輔助函數 =====================
-def create_strategy_instance(
-    strategy_name: str,
-    base_amount: float,
-    params: Dict[str, Any]
-):
-    """根據名稱創建策略實例"""
-    if strategy_name == 'V0: 純定期定額':
-        return DCAPureStrategy(base_amount=base_amount)
-    elif strategy_name == 'V1: 跌深加碼':
-        return DCADipBuyingStrategy(
-            base_amount=base_amount,
-            lookback_period=params.get('lookback_period', 252),
-            dip_threshold_1=params.get('dip_threshold_1', 0.10),
-            multiplier_1=params.get('multiplier_1', 1.5),
-            dip_threshold_2=params.get('dip_threshold_2', 0.20),
-            multiplier_2=params.get('multiplier_2', 2.0),
-        )
-    elif strategy_name == 'V2: 趨勢過濾':
-        return DCATrendFilterStrategy(
-            base_amount=base_amount,
-            ma_period=params.get('ma_period', 200),
-            ma_type=params.get('ma_type', 'SMA'),
-            below_multiplier=params.get('below_multiplier', 1.5),
-        )
-    elif strategy_name == 'V3: 波動率調整':
-        return DCAVolatilityStrategy(
-            base_amount=base_amount,
-            volatility_window=params.get('volatility_window', 20),
-            high_vol_threshold=params.get('high_vol_threshold', 1.5),
-            low_vol_threshold=params.get('low_vol_threshold', 0.8),
-            high_vol_multiplier=params.get('high_vol_multiplier', 1.5),
-            low_vol_multiplier=params.get('low_vol_multiplier', 0.8),
-        )
-    else:
-        return DCAPureStrategy(base_amount=base_amount)
-
-
-def render_metric_card(label: str, value: str, is_positive: bool = True):
-    """渲染指標卡片"""
-    color_class = "positive" if is_positive else "negative"
-    st.markdown(f"""
-    <div style="background: #f8f9fa; border-radius: 10px; padding: 15px; text-align: center; border-left: 4px solid {'#4CAF50' if is_positive else '#F44336'};">
-        <div style="font-size: 0.85rem; color: #666; margin-bottom: 5px;">{label}</div>
-        <div style="font-size: 1.5rem; font-weight: 700;" class="{color_class}">{value}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-def calculate_buy_and_hold(market_data: pd.DataFrame, total_investment: float) -> Dict:
-    """計算 Buy & Hold 策略績效"""
-    # 優先使用 Close，如果沒有則用 Adj Close
-    price_col = 'Close' if 'Close' in market_data.columns else 'Adj Close'
-    if price_col not in market_data.columns:
-        raise KeyError(f"找不到價格欄位: {market_data.columns.tolist()}")
-    
-    prices = market_data[price_col]
-    first_price = prices.iloc[0]
-    last_price = prices.iloc[-1]
-    shares = total_investment / first_price
-    final_value = shares * last_price
-    total_return = (final_value - total_investment) / total_investment * 100
-    
-    years = (market_data.index[-1] - market_data.index[0]).days / 365.25
-    cagr = ((final_value / total_investment) ** (1 / years) - 1) * 100 if years > 0 else 0
-    
-    # 計算回撤
-    cummax = prices.cummax()
-    drawdown = (prices - cummax) / cummax * 100
-    max_drawdown = drawdown.min()
-    
-    # 計算波動率
-    returns = prices.pct_change().dropna()
-    volatility = returns.std() * np.sqrt(252) * 100
-    
-    # 夏普比率
-    sharpe = (cagr - 2) / volatility if volatility > 0 else 0
-    
-    return {
-        'total_return': total_return,
-        'cagr': cagr,
-        'max_drawdown': max_drawdown,
-        'sharpe_ratio': sharpe,
-        'volatility': volatility,
-        'final_value': final_value,
-        'total_invested': total_investment
-    }
-
-
-def save_test_result(results: Dict, config: Dict, name: str):
-    """保存測試結果"""
-    save_dir = "results/saved_tests"
-    os.makedirs(save_dir, exist_ok=True)
-    
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{save_dir}/test_{timestamp}_{name}.pkl"
-    
-    data = {
-        'results': results,
-        'config': config,
-        'name': name,
-        'timestamp': timestamp
-    }
-    
-    with open(filename, 'wb') as f:
-        pickle.dump(data, f)
-    
-    return filename
-
-
-def load_saved_tests():
-    """載入已保存的測試"""
-    save_dir = "results/saved_tests"
-    if not os.path.exists(save_dir):
-        return []
-    
-    tests = []
-    for f in os.listdir(save_dir):
-        if f.endswith('.pkl'):
-            filepath = os.path.join(save_dir, f)
-            try:
-                with open(filepath, 'rb') as file:
-                    data = pickle.load(file)
-                    data['filepath'] = filepath
-                    tests.append(data)
-            except:
-                pass
-    
-    return sorted(tests, key=lambda x: x.get('timestamp', ''), reverse=True)
+# CSS 載入已移至 utils/common.py 的 load_css() 函數
 
 
 # ===================== 主應用 =====================
 def main():
+    # 載入 CSS 樣式
+    load_css()
+    
     # 標題
     st.title("📈 定期定額策略回測工具")
     st.caption("DCA Strategy Backtesting Tool - 研究不同定期定額策略的歷史表現")

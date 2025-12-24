@@ -1,0 +1,73 @@
+/* assets/styles.css */
+/* DCA 回測工具樣式 */
+
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700&display=swap');
+
+/* 只對特定文字元素套用中文字體 */
+.stMarkdown, .stMarkdown p, .stMarkdown li,
+h1, h2, h3, h4, h5, h6,
+.stDataFrame, .stTable,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stMarkdown,
+.element-container p {
+    font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+}
+
+.metric-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 10px;
+    padding: 20px;
+    color: white;
+    text-align: center;
+    margin: 5px;
+}
+
+.metric-value {
+    font-size: 2rem;
+    font-weight: 700;
+}
+
+.metric-label {
+    font-size: 0.9rem;
+    opacity: 0.9;
+}
+
+.positive { color: #4CAF50; }
+.negative { color: #F44336; }
+
+.stTabs [data-baseweb="tab-list"] {
+    gap: 8px;
+}
+
+.stTabs [data-baseweb="tab"] {
+    padding: 10px 20px;
+    border-radius: 5px;
+}
+
+/* 卡片樣式 */
+.info-card {
+    background: #f8f9fa;
+    border-radius: 10px;
+    padding: 15px;
+    text-align: center;
+    border-left: 4px solid #4CAF50;
+}
+
+.info-card.negative {
+    border-left-color: #F44336;
+}
+
+/* 表格樣式 */
+.dataframe {
+    font-size: 0.9rem;
+}
+
+/* 側邊欄樣式 */
+[data-testid="stSidebar"] {
+    background-color: #f8f9fa;
+}
+
+/* 進度條樣式 */
+.stProgress > div > div {
+    background-color: #4CAF50;
+}

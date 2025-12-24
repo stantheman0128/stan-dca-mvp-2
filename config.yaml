@@ -1,0 +1,74 @@
+# config.yaml
+# DCA 回測工具配置文件
+
+# 應用程式設定
+app:
+  title: "DCA 策略回測工具"
+  page_icon: "📈"
+  layout: "wide"
+
+# 支援的市場
+markets:
+  # 美股
+  SPY: "S&P 500 ETF"
+  QQQ: "Nasdaq 100 ETF"
+  DIA: "Dow Jones ETF"
+  IWM: "Russell 2000 ETF"
+  # 台股
+  0050.TW: "元大台灣50"
+  0056.TW: "元大高股息"
+  ^TWII: "台灣加權指數"
+  # 國際
+  ^N225: "日經225"
+  ^FTSE: "英國富時100"
+  ^GDAXI: "德國DAX"
+
+# 預設值
+defaults:
+  start_date: "2010-01-01"
+  end_date: "today"
+  frequency: "M"  # M=月, W=週, Q=季
+  base_amount: 10000
+  risk_free_rate: 0.02
+
+# 策略參數預設值
+strategy_defaults:
+  v1_dip_buying:
+    lookback_period: 252
+    dip_threshold_1: 0.10
+    multiplier_1: 1.5
+    dip_threshold_2: 0.20
+    multiplier_2: 2.0
+  
+  v2_trend_filter:
+    ma_period: 200
+    ma_type: "SMA"
+    below_multiplier: 1.5
+  
+  v3_volatility:
+    volatility_window: 20
+    high_vol_threshold: 1.5
+    low_vol_threshold: 0.8
+    high_vol_multiplier: 1.5
+    low_vol_multiplier: 0.8
+
+# 金融事件標註
+financial_events:
+  "2008-09-15": "雷曼兄弟倒閉"
+  "2008-10-10": "金融海嘯谷底"
+  "2011-08-05": "美債降級"
+  "2015-08-24": "中國股災"
+  "2016-06-23": "英國脫歐"
+  "2020-03-23": "疫情恐慌谷底"
+  "2022-02-24": "俄烏戰爭"
+  "2022-06-16": "Fed 激進升息"
+
+# Grid Search 設定
+grid_search:
+  max_cache_size: 5
+  default_markets: ["SPY", "QQQ", "0050.TW"]
+
+# 記憶體管理
+memory:
+  cache_ttl_hours: 24
+  max_saved_tests: 50
