@@ -4,6 +4,10 @@
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-red.svg)](https://streamlit.io/)
 
+## 👍 Demo
+
+https://stan-dca-mvp-2.zeabur.app/
+
 ## 📝 專案概述
 
 這是一個專業的定期定額（DCA, Dollar-Cost Averaging）策略回測工具，支援多種策略變化、跨市場回測、完整績效指標和報告導出。
